@@ -2,3 +2,4 @@ sqlalchemy
 datetime
 pandas
 os
+psycopg2-binary

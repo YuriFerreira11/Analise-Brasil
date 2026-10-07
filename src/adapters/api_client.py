@@ -4,13 +4,13 @@ import pandas as pd
 
 class ApiClient:
     BASE_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados"
-    def __init__(self, timeout: int = 15):
+    def __init__(self, timeout: int = 60):
         self.timeout = timeout
     def buscar_serie(self,
         codigo_serie: int,
         data_inicial: date | None = None,
         data_final: date | None = None) -> pd.DataFrame:
-        url = self.BASE_URL.format(codigo_serie=codigo_serie)
+        url = self.BASE_URL.format(codigo=codigo_serie)
         params = {"formato": "json"}
         if data_inicial:
             params["dataInicial"] = data_inicial.strftime("%d/%m/%Y")
