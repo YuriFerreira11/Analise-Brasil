@@ -1,6 +1,6 @@
 import pandas as pd
 from datetime import date
-from src.adapters.api_client import ApiClient
+from src.adapters.bcb_api import ApiClient
 from sqlalchemy import create_engine, text
 import os
 
@@ -37,10 +37,9 @@ def transform(dados_brutos: dict[str, pd.DataFrame]) -> pd.DataFrame:
         if df['valor'].isna().any():
             raise ValueError(f"{nome_valor}: {int(df['valor'].isna().sum())} valores inválidos")
         dados_limpos[nome] = (
-            df.drop_duplicates("data").
-            sort_values("data").
-            rename(columns={"valor": nome_valor}).
-            reset_index(drop=True)
+            df.drop_duplicates("data")
+            .rename(columns={"valor": nome_valor})
+            .reset_index(drop=True)
         )
     selic_m = dados_limpos["selic"].set_index("data")["taxa_selic"].resample("MS").last()
     ipca_m = dados_limpos["ipca"].assign(

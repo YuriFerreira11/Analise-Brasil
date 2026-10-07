@@ -128,7 +128,7 @@ Governança aqui não é burocracia — é garantir que quem consumir esses dado
 * **Segurança:** Uso rigoroso de variáveis de ambiente (`.env`).
 
 ### 🔜 Nível 1: Validação Contínua (Próximo Passo)
-- [ ] **Testes Unitários:** Uso de `pytest` com DataFrames "mockados" para testar regras de negócio isoladas da rede.
+- [x] **Testes Unitários:** Uso de `pytest` com DataFrames "mockados" para testar regras de negócio isoladas da rede.
 - [ ] **Contratos de Dados (Pandera):** Garantir unicidade de datas e ranges válidos (ex: Selic não pode ser negativa; IPCA entre -5% e 30%).
 
 ### 🔜 Nível 2: Observabilidade
