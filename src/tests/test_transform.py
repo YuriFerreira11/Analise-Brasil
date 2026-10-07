@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-
+import pandera.errors
 from src.pipelines.etl_macro import transform
 
 
@@ -93,4 +93,13 @@ def test_rejeita_vazio(dados):
 def test_rejeita_nulo(dados):
     dados["ipca"] = df_fake(["10/01/2025"], [None])
     with pytest.raises(ValueError, match="ipca_pct"):
+        transform(dados)
+def test_rejeita_selic_negativa(dados):
+    dados["selic"] = df_fake(["02/01/2025", "11/02/2025"], ["-1.0", "10.75"])
+    with pytest.raises(pandera.errors.SchemaError):
+        transform(dados)
+
+def test_rejeita_ipca_fora_do_range(dados):
+    dados["ipca"] = df_fake(["10/01/2025", "11/02/2025"], ["0.40", "45.0"])
+    with pytest.raises(pandera.errors.SchemaError):
         transform(dados)

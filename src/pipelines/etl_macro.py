@@ -3,11 +3,24 @@ from datetime import date
 from src.adapters.bcb_api import ApiClient
 from sqlalchemy import create_engine, text
 import os
+import pandera.pandas as pa
+import logging
 
 SERIES = {"selic": 432, "ipca": 433}
 DATA_INICIAL = date(2020, 1, 1)
 COLUNAS = {"selic": "taxa_selic", "ipca": "ipca_pct"}
-
+# Contrato do DataFrame consolidado: quem consumir esses dados pode confiar
+# que data é única e os indicadores estão em range plausível.
+SCHEMA_INDICADORES = pa.DataFrameSchema({
+    "data": pa.Column(pa.DateTime, unique=True, nullable=False),
+    "taxa_selic": pa.Column(float, pa.Check.in_range(0, 60), nullable=False),
+    "ipca_pct": pa.Column(float, pa.Check.in_range(-5, 30), nullable=False),
+})
+logger = logging.getLogger("etl_macro")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 def extract() -> dict[str, pd.DataFrame]:
     """Extrai as séries do Banco Central e devolve um DataFrame por série."""
     cliente = ApiClient(timeout=60)
@@ -21,7 +34,7 @@ def extract() -> dict[str, pd.DataFrame]:
             frames[nome].append(
                 cliente.buscar_serie(codigo, data_inicial=inicio, data_final=fim)
             )
-        print(f"✓ ano {ano} extraído")
+    logger.info("ano %d extraído", ano)
 
     return {nome: pd.concat(df_list, ignore_index=True) for nome, df_list in frames.items()}
 
@@ -47,7 +60,8 @@ def transform(dados_brutos: dict[str, pd.DataFrame]) -> pd.DataFrame:
     ).set_index("data")["ipca_pct"]
 
     # Faz o join das duas séries pelo índice de data e retorna o DataFrame consolidado
-    return pd.concat([selic_m, ipca_m], axis=1, join="inner").reset_index()
+    df_consolidado = pd.concat([selic_m, ipca_m], axis=1, join="inner").reset_index()
+    return SCHEMA_INDICADORES.validate(df_consolidado)
 
 
 def load(df: pd.DataFrame, tabela: str, schema: str = "staging") -> int:
@@ -55,7 +69,6 @@ def load(df: pd.DataFrame, tabela: str, schema: str = "staging") -> int:
         return 0
 
     engine = create_engine(os.environ["DATABASE_URL"])
-
     with engine.begin() as conn:  # transação única: erro => rollback
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
         conn.execute(text(f"""
@@ -77,4 +90,32 @@ def load(df: pd.DataFrame, tabela: str, schema: str = "staging") -> int:
         )
 
     return len(df)
+
+
+def registrar_execucao(engine, tabela: str, linhas_lidas: int,
+                       linhas_carregadas: int, status: str,
+                       duracao_seg: float, detalhe: str = "") -> None:
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS staging.execucoes (
+                id              BIGSERIAL PRIMARY KEY,
+                executado_em    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                tabela          TEXT NOT NULL,
+                linhas_lidas    INTEGER,
+                linhas_carregadas INTEGER,
+                status          TEXT NOT NULL,
+                duracao_seg     NUMERIC(10, 2),
+                detalhe         TEXT
+            )
+        """))
+        conn.execute(
+            text("""
+                INSERT INTO staging.execucoes
+                    (tabela, linhas_lidas, linhas_carregadas, status, duracao_seg, detalhe)
+                VALUES (:tabela, :linhas_lidas, :linhas_carregadas, :status, :duracao_seg, :detalhe)
+            """),
+            dict(tabela=tabela, linhas_lidas=linhas_lidas,
+                 linhas_carregadas=linhas_carregadas, status=status,
+                 duracao_seg=duracao_seg, detalhe=detalhe),
+        )
 
