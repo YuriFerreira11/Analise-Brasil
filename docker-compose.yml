@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: macro
+      POSTGRES_USER: etl
+      POSTGRES_PASSWORD: etl123
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  etl:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg2://etl:etl123@db:5432/macro
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
