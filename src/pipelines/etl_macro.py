@@ -28,11 +28,16 @@ RANGES = {
 # Variação mensal absurda (ex: salto >50% em um mês) é o sinal real de erro.
 NIVEIS = {"ibcbr": 0}
 
+def _variacao_mensal_ok(s: pd.Series) -> bool:
+    return bool((s.dropna().pct_change().abs().dropna() < 0.50).all())
+
 SCHEMA_INDICADORES = pa.DataFrameSchema({
     "data": pa.Column(pa.DateTime, unique=True, nullable=False),
-        **{col: pa.Column(float,
+    **{col: pa.Column(float, pa.Check.in_range(lo, hi), nullable=True)
+       for col, (lo, hi) in RANGES.items()},                      # <- faltava aplicar
+    **{col: pa.Column(float,
                       [pa.Check.ge(piso),
-                       pa.Check(lambda s: s.pct_change().abs().max() < 0.50,
+                       pa.Check(_variacao_mensal_ok,
                                 error="variação mensal > 50% — provável erro de dado")],
                       nullable=True)
        for col, piso in NIVEIS.items()},
@@ -63,12 +68,18 @@ def transform(dados_brutos: dict[str, pd.DataFrame]) -> pd.DataFrame:
     mensais = []
     for nome, df_bruto in dados_brutos.items():
         df = df_bruto.copy()
+        if df.empty:
+            raise ValueError(f"{nome}: série vazia")
 
-        df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y")
+        try:
+            df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y")
+        except ValueError as e:
+            raise ValueError(f"{nome}: data inválida ({e})") from e
         df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
 
-        if df['valor'].isna().any():
+        if df["valor"].isna().any():
             raise ValueError(f"{nome}: {int(df['valor'].isna().sum())} valores inválidos")
+        df["valor"] = df["valor"].astype(float)
         df = df.drop_duplicates("data")
         serie = df.set_index("data")["valor"]
         mensais.append(serie.resample("MS").agg(SERIES[nome]["agregacao"]).rename(nome))
@@ -76,7 +87,6 @@ def transform(dados_brutos: dict[str, pd.DataFrame]) -> pd.DataFrame:
     df_consolidado = pd.concat(mensais, axis=1, join="outer").reset_index()
     df_consolidado["data"] = df_consolidado["data"].dt.to_period("M").dt.to_timestamp()
     return SCHEMA_INDICADORES.validate(df_consolidado)
-
 
 def load(df: pd.DataFrame, tabela: str, schema: str = "staging") -> int:
     """Carga idempotente (upsert por data) em transação única."""
