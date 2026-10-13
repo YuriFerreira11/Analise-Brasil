@@ -1,18 +1,21 @@
 import pandas as pd
 from datetime import date, timedelta
 from src.adapters.bcb_api import ApiClient
-from src.db.db import get_engine
-from sqlalchemy import create_engine, text
-import os
+from src.database.db import get_engine
+from sqlalchemy import text
 import pandera.pandas as pa
 import logging
+from src.adapters.focus_api import FocusApiClient
 
 SERIES = {
     "taxa_selic": {"codigo": 432,   "agregacao": "last"},
     "ipca_pct":   {"codigo": 433,   "agregacao": "last"},
     "cambio_usd": {"codigo": 1,     "agregacao": "mean"},
     "igpm":       {"codigo": 189,   "agregacao": "last"},
-    "ibcbr":      {"codigo": 4380,  "agregacao": "last"},
+    "ibcbr":      {"codigo": 24364, "agregacao": "last", "inicio": date(2003, 1, 1)},
+    "desemprego":  {"codigo": 24369, "agregacao": "last", "inicio": date(2012, 1, 1)},
+    "ipca_focus":  {"fonte": "focus", "agregacao": "last"},
+
 }
 DATA_INICIAL = date(2000, 1, 1)
 # Contrato do DataFrame consolidado: quem consumir esses dados pode confiar
@@ -23,6 +26,9 @@ RANGES = {
     "ipca_pct": (-5, 30),
     "cambio_usd": (0, 20),
     "igpm": (-10, 40),
+    "ibcbr": (50, 300),
+    "desemprego": (0, 30),
+    "ipca_focus": (0, 30),
 }
 
 # Níveis (valores absolutos que crescem com o tempo): só limites físicos.
@@ -48,26 +54,39 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-def extract(ultimas_datas: dict[str, date] | None = None,
-            full_refresh: bool = False) -> dict[str, pd.DataFrame]:
-    """Extrai as séries do Banco Central e devolve um DataFrame por série."""
-    cliente = ApiClient(timeout=60)
+def extract(ultimas_datas=None, full_refresh=False):
+    cliente_bcb = ApiClient(timeout=60)
+    cliente_focus = FocusApiClient(timeout=60)
     hoje = date.today()
     frames = {nome: [] for nome in SERIES}
+
+    series_bcb = {n: c for n, c in SERIES.items() if c.get("fonte") != "focus"}
+    series_focus = {n: c for n, c in SERIES.items() if c.get("fonte") == "focus"}
 
     for ano in range(DATA_INICIAL.year, hoje.year + 1):
         inicio_ano = date(ano, 1, 1)
         fim = min(date(ano, 12, 31), hoje)
-
-        for nome, cfg in SERIES.items():
-            inicio = inicio_ano
+        n_req = 0
+        for nome, cfg in series_bcb.items():
+            inicio = max(inicio_ano, cfg.get("inicio", DATA_INICIAL))
+            if inicio > fim:
+                continue
             if not full_refresh and ultimas_datas and ultimas_datas.get(nome):
                 ultima = ultimas_datas[nome]
                 if ultima >= fim:
                     continue
-                inicio = max(inicio_ano, ultima + timedelta(days=1))
-            frames[nome].append(cliente.buscar_serie(cfg["codigo"], data_inicial=inicio, data_final=fim))
-        logger.info("ano %d: %d requisições", ano, len([f for f in frames.values()][0]))
+                inicio = max(inicio, ultima + timedelta(days=1))
+            frames[nome].append(
+                cliente_bcb.buscar_serie(cfg["codigo"], data_inicial=inicio, data_final=fim)
+            )
+            n_req += 1
+        logger.info("ano %d: %d requisições", ano, n_req)
+
+    for nome, cfg in series_focus.items():
+        frames[nome].append(
+            cliente_focus.buscar_serie(None, data_inicial=DATA_INICIAL, data_final=hoje)
+        )
+        logger.info("focus: 1 requisição (cobre 2000→hoje)")
 
     return {
         nome: pd.concat(lista, ignore_index=True) if lista

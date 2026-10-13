@@ -1,153 +1,161 @@
 # 🇧🇷 Análise do Brasil — Pipeline de Dados Macroeconômicos
 
-![Python](https://img.shields.io/badge/Python-3.12+-blue.svg?logo=python&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg?logo=postgresql&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Em%20Desenvolvimento-success.svg)
-
-Pipeline ETL desenvolvido em Python que extrai indicadores macroeconômicos (SELIC e IPCA) da API do Banco Central do Brasil (SGS), transforma em série mensal consolidada e carrega em um banco de dados PostgreSQL. O projeto serve como fundação de dados confiável para futuras análises, dashboards e modelos preditivos.
+Pipeline ETL em Python que extrai **5 indicadores macroeconômicos** da API do
+Banco Central do Brasil (SGS), consolida em base mensal única (2000→hoje),
+valida com contratos de dados (Pandera) e carrega em PostgreSQL — com testes
+(41 cenários), observabilidade, Docker e carga incremental. Serve de fundação
+para análise (EDA), modelos preditivos de inflação e, futuramente, consumo
+via API/LLM.
 
 ---
 
 ## 🛠️ Tech Stack
-*   **Linguagem:** Python 3.12+
-*   **Manipulação de Dados:** Pandas
-*   **Banco de Dados:** PostgreSQL
-*   **Integração e ORM:** SQLAlchemy, psycopg2
-*   **Gestão de Configurações:** python-dotenv
 
-## 🎯 Objetivo
-
-Construir uma fundação de dados confiável sobre a economia brasileira, começando com uma arquitetura simples (ETL local focado em 2 séries) e evoluindo iterativamente para uma plataforma completa com orquestração em nuvem, modelos preditivos e consumo via API de IA Generativa.
+- **Linguagem:** Python 3.14 (testada — Dockerfile e CI usam a mesma)
+- **Dados:** Pandas, NumPy
+- **Banco:** PostgreSQL (SQLAlchemy + psycopg2)
+- **Qualidade:** Pandera (contratos de dados), pytest (41 testes, validados por mutation testing)
+- **Infra:** Docker + Docker Compose, GitHub Actions (CI de testes)
+- **Análise:** Jupyter, Matplotlib, Seaborn
 
 ## 🏗️ Arquitetura
 
 ```mermaid
 graph LR
-    A[(API BCB<br/>SGS/OLTP)] -->|Extract| B(Python + Pandas<br/>ETL Pipeline)
-    B -->|Transform| B
-    B -->|Load| C[(PostgreSQL<br/>schema: staging)]
-    D[.env<br/>Credenciais] -.->|Injeta variáveis| B
-    
-    style A fill:#f9f,stroke:#333,stroke-width:2px
+    A[(API BCB<br/>SGS)] -->|extract<br/>paginado + retry| B(src/pipelines<br/>etl_macro.py)
+    B -->|transform<br/>resample + Pandera| B
+    B -->|load<br/>upsert idempotente| C[(PostgreSQL<br/>staging)]
+    D[.env<br/>credenciais] -.-> B
+    T[tests/<br/>41 cenários] -.->|valida| B
+    G[GitHub Actions] -.->|pytest a cada push| B
+
     style B fill:#bbf,stroke:#333,stroke-width:2px
     style C fill:#bfb,stroke:#333,stroke-width:2px
-    style D fill:#eee,stroke:#333,stroke-dasharray: 5 5
 ```
 
 ### Estrutura de Pastas
 
-```text
+```
 Analise-Brasil/
-├── .env                     # Credenciais (NÃO versionar — ver .gitignore)
-├── .gitignore
+├── .env                  # credenciais (NÃO versionar; ver .env.example)
+├── .env.example          # template das variáveis
+├── docker-compose.yml    # Postgres + ETL (banco oficial: porta 5433)
+├── Dockerfile
 ├── requirements.txt
 ├── README.md
-└── src/
-    ├── main.py              # Ponto de entrada (Entrypoint) do pipeline
-    ├── adapters/
-    │   └── bcb_api.py       # Cliente da API do BCB (com retry e timeout)
-    └── pipelines/
-        └── etl_macro.py     # Lógica central: extract → transform → load
+├── .github/workflows/    # CI: testes a cada push
+├── notebooks/
+│   └── eda.ipynb         # análise exploratória (322 meses, 5 séries)
+├── src/
+│   ├── main.py           # entrypoint (incremental por padrão, --full p/ backfill)
+│   ├── database/db.py    # get_engine() — conexão única, lru_cache
+│   ├── adapters/bcb_api.py   # cliente SGS: retry, backoff, tratamento 5xx
+│   └── pipelines/etl_macro.py  # extract → transform → load + registrar_execucao
+└── tests/
+    └── test_transform.py # 41 cenários (golden, fronteiras, fail-fast)
 ```
 
 ### Fontes de Dados
 
-| Indicador | Série SGS | Periodicidade | Coluna no Banco |
-|-----------|-----------|---------------|-----------------|
-| **SELIC** | 432       | Diária        | `taxa_selic`    |
-| **IPCA**  | 433       | Mensal        | `ipca_pct`      |
+| Indicador | Série SGS | Periodicidade | Agregação mensal | Coluna |
+|---|---|---|---|---|
+| SELIC | 432 | diária | `last` (último do mês) | `taxa_selic` |
+| IPCA | 433 | mensal | `last` | `ipca_pct` |
+| Câmbio USD/BRL | 1 | diária | `mean` (média do mês) | `cambio_usd` |
+| IGP-M | 189 | mensal | `last` | `igpm` |
+| IBC-Br | 4380 | mensal | `last` | `ibcbr` |
 
-> 💡 **Nota sobre a SELIC**: A série 432 é diária. A função `transform()` utiliza `resample("MS").last()` para consolidar sempre o último valor vigente do mês, alinhando a granularidade com o IPCA. *(Alternativa futura: migrar para a série 4390, eliminando a necessidade de resample).*
+> ⚠️ `DATA_INICIAL = 2000` e join **outer**: cada série entra com o que tem —
+> nulos no fim da amostra são estruturais (IBC-Br atrasa ~2 meses, IPCA sai
+> dia ~10). O Pandera trata isso: taxas com range fixo, níveis com check de
+> variação mensal máxima.
 
-## 🚀 Como Rodar Localmente
+## 🚀 Como Rodar
 
 ### Pré-requisitos
-- Python 3.14 (versão testada no projeto — o Dockerfile e o CI usam ela)
-- PostgreSQL rodando localmente (ou Docker)
+- Docker Desktop (banco oficial do projeto)
+- Python 3.14 (para rodar o pipeline/notebook fora do container)
 
-### Passo a Passo
+### Subir o banco e rodar
 
-1. **Clone o repositório e acesse a pasta:**
-   ```bash
-   git clone https://github.com/YuriFerreira11/Analise-Brasil.git
-   cd Analise-Brasil
-   ```
+```bash
+docker compose up -d db                 # Postgres oficial (localhost:5433)
 
-2. **Crie e ative o ambiente virtual:**
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate        # Windows
-   # source .venv/bin/activate   # Linux/Mac 
-   ```
+cp .env.example .env                    # preencha com seus valores
 
-3. **Instale as dependências:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+python -m src.main                      # carga incremental (padrão)
+python -m src.main --full               # backfill completo desde 2000
 
-4. **Configure as credenciais:**
-   Crie um arquivo `.env` na raiz do projeto com as suas configurações locais:
-   ```env
-   DATABASE_URL=link
-   ```
-
-5. **Execute o pipeline:**
-   ```bash
-   python src/main.py
-   ```
-
-**Saída esperada no terminal:**
-```text
-✓ ano 2020 extraído
-...
-✓ ano 2026 extraído
-Sucesso: 80 linhas carregadas em staging.indicadores_macro
+python -m pytest -v                     # 41 testes
 ```
 
-## ⚙️ Decisões Técnicas (e os "porquês")
+### Conectar no DBeaver
 
-| Decisão Arquitetural | Motivação |
+Host `localhost`, porta `5433`, banco `macro`, usuário/senha conforme `.env`.
+
+### EDA
+
+```bash
+jupyter notebook notebooks/eda.ipynb    # ou abra no PyCharm/VS Code
+```
+
+O notebook lê o banco via `get_engine()` — quando migrar pro Supabase, só o
+`.env` muda.
+
+---
+
+## ⚙️ Decisões Técnicas (e os porquês)
+
+| Decisão | Motivo |
 |---|---|
-| **Paginação por ano no *Extract*** | A API pública do BCB possui instabilidades; requisições muito longas estouravam o timeout. |
-| **Validação explícita no *Transform*** | A conversão para numérico (`pd.to_numeric`) que gera `NaN` levanta um `ValueError` explícito. Preferimos que o pipeline falhe ruidosamente (*fail-fast*) a carregar dados corrompidos silenciosamente. |
-| **Idempotência no *Load*** | O pipeline é projetado para ser reexecutável. Rodar 10 vezes não duplica registros. |
-| **Isolamento de Adapters** | A comunicação HTTP com o BCB fica isolada na pasta `adapters/`. Se a fonte mudar, as regras de negócio (`pipelines/`) não são afetadas. |
-| **Schema `staging`** | Separa logicamente os dados brutos recém-ingestados de futuras camadas refinadas (ex: `analytics` ou `features`). |
+| **Paginação por ano + retry (5xx/HTML)** | API do BCB é pública e instável: 502/503 acontecem; timeout de payload longo era certeiro |
+| **Carga incremental + `--full` explícito** | Extrair 26 anos sempre era desperdício; reprocessamento total virou decisão consciente, nunca acidente |
+| **`keep="first"` em duplicatas** | Regra documentada: primeira ocorrência na ordem de chegada vence (testada) |
+| **Join outer + nullable no Pandera** | Séries publicam em dias diferentes; mês com série única existe, com nulo nas demais |
+| **Upsert (`ON CONFLICT DO UPDATE`)** | Idempotência: rodar N vezes = rodar 1 |
+| **Transação única no load** | `engine.begin()`: erro em qualquer ponto = rollback total |
+| **`get_engine()` com lru_cache** | Uma conexão por processo; troca local ↔ Supabase = só mudar `.env` |
+| **Pandera com ranges por tipo** | Taxas (SELIC/IPCA) têm teto econômico; níveis (IBC-Br) crescem — variação mensal >50% é o sinal real de erro |
 
 ---
 
-## 🛡️ Governança e Qualidade de Dados
+## 🛡️ Governança e Qualidade
 
-Governança aqui não é burocracia — é garantir que quem consumir esses dados não tome decisões com números errados. 
+### ✅ Implementado
 
-### ✅ Nível Básico (Implementado)
-* **Validação de Schema:** Tipagem forte forçada durante a transformação.
-* **Fail-Fast:** Rejeição ativa de dados inconsistentes antes de encostar no banco.
-* **Segurança:** Uso rigoroso de variáveis de ambiente (`.env`).
+- **Testes:** 41 cenários — golden test, fronteiras de range, fail-fast (valor/data/ série vazia), embaralhamento, duplicatas. Validados por mutation testing (quebrar `.last()`→`.first()`, remover `sort`/`drop_duplicates` → testes detectam)
+- **Contratos (Pandera):** unicidade de datas, ranges por coluna, checagem de variação mensal para níveis
+- **Observabilidade:** logs estruturados + tabela `staging.execucoes` (linhas lidas/carregadas, status, duração, erro) — toda execução deixa rastro
+- **Segurança:** credenciais em `.env` (fora do Git e do build Docker)
 
-### ✅ Nível 1: Validação Contínua (Próximo Passo)
-- [x] **Testes Unitários:** Uso de `pytest` com DataFrames "mockados" para testar regras de negócio isoladas da rede.
-- [x] **Contratos de Dados (Pandera):** Garantir unicidade de datas e ranges válidos (ex: Selic não pode ser negativa; IPCA entre -5% e 30%).
+### 🔜 Próximos níveis
 
-### ✅ Nível 2: Observabilidade
-- [x] **Logs Estruturados:** Registrar metadados de execução (tempo, linhas lidas, status) em uma tabela `staging.execucoes`.
+- Linhagem de dados (de qual série vem cada coluna, versionamento)
+- SLA de atualização (alerta se `MAX(data)` atrasar além do esperado por série)
+- Camada `analytics` (views de consumo para ML/API)
 
 ---
 
-## 🗺️ Roadmap do Projeto
+## 🗺️ Roadmap
 
-O desenvolvimento segue uma lógica iterativa e incremental:
+| Etapa | Status | Conteúdo |
+|---|---|---|
+| 1. Robustez local | ✅ | 41 testes, Pandera, observabilidade, 5 séries, incremental |
+| 1.5. EDA | ✅ | `notebooks/eda.ipynb` — sazonalidade, volatilidade, lags → features |
+| 2. Docker | ✅ | `Dockerfile` + `docker-compose.yml`, banco oficial unificado (5433) |
+| 2.5. CI | ✅ | GitHub Actions roda pytest a cada push |
+| 3. Cloud | ⏭️ | Supabase (free tier) + GitHub Actions agendado (ETL diário) |
+| 4. ML | ⏭️ | Baselines (naive, média móvel 12m, ARIMA) vs IPCA, rolling origin; features do EDA |
+| 5. Consumo | ⏭️ | FastAPI + dashboard; LLM com text-to-SQL sobre camada `analytics` |
 
-1. **Robustez Local (Atual)**
-   - Adicionar validações em Pandera e escrever testes com Pytest.
-   - Incluir novas séries: IGPM (189), Dólar (1) e Desemprego (24369).
-2. **Containerização**
-   - Criar `Dockerfile` e `docker-compose.yml` para orquestrar o Postgres e o script Python juntos.
-3. **Cloud & Orquestração**
-   - Migrar banco para AWS RDS / Supabase.
-   - Orquestrar execuções diárias via Apache Airflow ou GitHub Actions.
-4. **Machine Learning**
-   - Engenharia de features (médias móveis, lags).
-   - Treinar baselines de séries temporais (Prophet / ARIMA) para prever a inflação.
-5. **IA Generativa (Consumo)**
-   - Integrar LLMs (Gemini/OpenAI) para ler os dados do banco e gerar resumos textuais analíticos automaticamente.
+> **Regra do projeto:** dados governados antes de ML — modelo em cima de dado
+> sem qualidade é lixo bonito. LLM nunca acessa `staging` diretamente.
+
+---
+
+## 📋 Convenções do projeto
+
+- Mensagens de commit: imperativo, uma linha (`"Adiciona X"`, `"Corrige Y"`)
+- `.env` nunca versionado; `.env.example` com placeholders sempre atualizado
+- `docker compose config` é leitura — **nunca** redirecionar para o `docker-compose.yml`
+- Datas que cruzam fronteiras (banco, API, índice) passam por `pd.to_datetime` antes de `.dt`

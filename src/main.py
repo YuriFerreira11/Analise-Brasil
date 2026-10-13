@@ -1,10 +1,9 @@
 import time
 import logging
-from sqlalchemy import create_engine, text
-import os
+from datetime import date
 import sys
 import pandas as pd
-from src.db.db import get_engine
+from src.database.db import get_engine
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -13,8 +12,8 @@ logger = logging.getLogger("main")
 def ultimas_datas_por_serie(engine) -> dict[str, date] | None:
     try:
         df_db = pd.read_sql("SELECT * FROM staging.indicadores_macro", engine)
-    except Exception:            # tabela ainda não existe
-        return None              # extract entende None como "tudo"
+    except Exception:         
+        return None             
     df_db["data"] = pd.to_datetime(df_db["data"])
     return {
         col: df_db.loc[df_db[col].notna(), "data"].max().date()
