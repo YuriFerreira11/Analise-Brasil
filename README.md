@@ -62,8 +62,8 @@ Analise-Brasil/
 ## 🚀 Como Rodar Localmente
 
 ### Pré-requisitos
-*   Python 3.12 ou superior
-*   PostgreSQL rodando localmente (com um banco chamado `macro` criado)
+- Python 3.14 (versão testada no projeto — o Dockerfile e o CI usam ela)
+- PostgreSQL rodando localmente (ou Docker)
 
 ### Passo a Passo
 
@@ -76,10 +76,8 @@ Analise-Brasil/
 2. **Crie e ative o ambiente virtual:**
    ```bash
    python -m venv .venv
-   # Windows:
-   .venv\Scripts\activate        
-   # Linux/Mac:
-   source .venv/bin/activate   
+   .venv\Scripts\activate        # Windows
+   # source .venv/bin/activate   # Linux/Mac 
    ```
 
 3. **Instale as dependências:**

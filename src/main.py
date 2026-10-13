@@ -1,18 +1,33 @@
 import time
 import logging
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import os
-
+import sys
+import pandas as pd
+from src.db.db import get_engine
 from dotenv import load_dotenv
 load_dotenv()
 
 from src.pipelines.etl_macro import extract, transform, load, registrar_execucao
 logger = logging.getLogger("main")
+def ultimas_datas_por_serie(engine) -> dict[str, date] | None:
+    try:
+        df_db = pd.read_sql("SELECT * FROM staging.indicadores_macro", engine)
+    except Exception:            # tabela ainda não existe
+        return None              # extract entende None como "tudo"
+    df_db["data"] = pd.to_datetime(df_db["data"])
+    return {
+        col: df_db.loc[df_db[col].notna(), "data"].max().date()
+        for col in df_db.columns if col != "data"
+    }
 def main():
     inicio = time.monotonic()
-    engine = create_engine(os.environ["DATABASE_URL"])
+    engine = get_engine()
+    full_refresh = "--full" in sys.argv
 
-    dados = extract()
+    ultimas = None if full_refresh else ultimas_datas_por_serie(engine)
+
+    dados = extract(ultimas_datas=ultimas, full_refresh=full_refresh)
     linhas_lidas = sum(len(df) for df in dados.values())
 
     try:

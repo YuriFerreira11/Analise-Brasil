@@ -1,6 +1,7 @@
 import pandas as pd
-from datetime import date
+from datetime import date, timedelta
 from src.adapters.bcb_api import ApiClient
+from src.db.db import get_engine
 from sqlalchemy import create_engine, text
 import os
 import pandera.pandas as pa
@@ -47,22 +48,32 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-def extract() -> dict[str, pd.DataFrame]:
+def extract(ultimas_datas: dict[str, date] | None = None,
+            full_refresh: bool = False) -> dict[str, pd.DataFrame]:
     """Extrai as séries do Banco Central e devolve um DataFrame por série."""
     cliente = ApiClient(timeout=60)
     hoje = date.today()
     frames = {nome: [] for nome in SERIES}
 
     for ano in range(DATA_INICIAL.year, hoje.year + 1):
-        inicio = date(ano, 1, 1)
+        inicio_ano = date(ano, 1, 1)
         fim = min(date(ano, 12, 31), hoje)
-        for nome, cfg in SERIES.items():
-            frames[nome].append(
-                cliente.buscar_serie(cfg["codigo"], data_inicial=inicio, data_final=fim)
-            )
-        logger.info("ano %d extraído", ano)
 
-    return {nome: pd.concat(df_list, ignore_index=True) for nome, df_list in frames.items()}
+        for nome, cfg in SERIES.items():
+            inicio = inicio_ano
+            if not full_refresh and ultimas_datas and ultimas_datas.get(nome):
+                ultima = ultimas_datas[nome]
+                if ultima >= fim:
+                    continue
+                inicio = max(inicio_ano, ultima + timedelta(days=1))
+            frames[nome].append(cliente.buscar_serie(cfg["codigo"], data_inicial=inicio, data_final=fim))
+        logger.info("ano %d: %d requisições", ano, len([f for f in frames.values()][0]))
+
+    return {
+        nome: pd.concat(lista, ignore_index=True) if lista
+              else pd.DataFrame(columns=["data", "valor"])
+        for nome, lista in frames.items()
+    }
 
 def transform(dados_brutos: dict[str, pd.DataFrame]) -> pd.DataFrame:
     mensais = []
@@ -97,7 +108,7 @@ def load(df: pd.DataFrame, tabela: str, schema: str = "staging") -> int:
     colunas_tipo = ", ".join(f"{c} NUMERIC(14, 4)" for c in cols if c != "data")
     update_sql = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != "data")
 
-    engine = create_engine(os.environ["DATABASE_URL"])
+    engine = get_engine()
     with engine.begin() as conn:  # transação única: erro => rollback
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
         conn.execute(text(f"""
