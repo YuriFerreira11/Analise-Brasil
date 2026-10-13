@@ -31,8 +31,8 @@ def dados():
             ["0.50", "0.40"],
         ),
         "ibcbr": df_fake(
-            ["15/01/2025", "15/02/2025"],
-            ["90000.0", "91500.0"],
+        ["15/01/2025", "15/02/2025"],
+        ["140.0", "141.5"],          # ✅ índice real do IBC-Br
         ),
         "desemprego": df_fake(
             ["10/01/2025", "11/02/2025"],
@@ -60,7 +60,9 @@ def test_resultado_completo(dados):
         "ipca_pct": [0.40, 0.30],
         "cambio_usd": [5.10, 5.20],
         "igpm": [0.50, 0.40],
-        "ibcbr": [90000.0, 91500.0],
+        "ibcbr": [140.0, 141.5],  
+        "desemprego": [7.8, 7.6],     
+        "ipca_focus": [4.9, 4.8],    
     })
     # assert_frame_equal compara floats com tolerância (não usa ==)
     pd.testing.assert_frame_equal(transform(dados), esperado)
@@ -69,7 +71,7 @@ def test_resultado_completo(dados):
 def test_colunas_e_tipos(dados):
     df = transform(dados)
     assert list(df.columns) == [
-        "data", "taxa_selic", "ipca_pct", "cambio_usd", "igpm", "ibcbr",
+        "data", "taxa_selic", "ipca_pct", "cambio_usd", "igpm", "ibcbr","desemprego", "ipca_focus",
     ]
     assert pd.api.types.is_datetime64_any_dtype(df["data"])
     for col in df.columns.drop("data"):
