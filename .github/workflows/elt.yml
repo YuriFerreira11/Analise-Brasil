@@ -1,0 +1,23 @@
+name: ETL Diário
+
+on:
+  schedule:
+    - cron: "0 13 * * *"      # 10h Brasília, todo dia
+  workflow_dispatch:           # botão "Run workflow" manual
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Testes antes do ETL
+        run: python -m pytest -v
+      - name: Rodar pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m src.main
