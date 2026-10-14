@@ -78,6 +78,15 @@ jupyter notebook notebooks/      # EDA e ML
 Conexão DBeaver: host `localhost`, porta `5433`, banco `macro`.
 
 ---
+## 📚 Catálogo de Dados
+
+| Dataset | Dono | Fonte | Frescor (SLA) | Qualidade | Consumidores |
+|---|---|---|---|---|---|
+| `staging.indicadores_macro` | pipeline ETL (automático) | BCB (SGS + Focus) | diário (cron 10h BRT) | Pandera + 41 testes + `execucoes` | notebooks EDA/ML, futura API |
+| `staging.execucoes` | pipeline ETL (automático) | metadados do pipeline | a cada execução | — | monitoramento, CI |
+
+Cobertura: 2000→hoje (IBC-Br desde 2003, desemprego desde 2012).
+Confiabilidade: carga idempotente; toda execução auditada em `staging.execucoes`.
 
 ## 📖 Dicionário de Dados — `staging.indicadores_macro`
 
