@@ -169,7 +169,7 @@ deve brilhar) e em nowcast. Hipóteses v2 registradas no notebook.
 | 2. Docker | ✅ | Dockerfile + compose, banco oficial unificado (5433) |
 | 2.5. CI | ✅ | GitHub Actions: pytest a cada push |
 | 2.6. ML baseline | ✅ | Rolling origin + seleção por fold + disponibilidade; vereditio honesto |
-| 3. Cloud | ⏭️ | Supabase (free tier) + Actions agendado (ETL diário) |
+| 3. Cloud | ✅ | Supabase (free tier) + Actions agendado (ETL diário) |
 | 4. ML v2 | ⏭️ | Alvo acumulado 12m, híbrido MM+resíduo, Focus em nível, DXY |
 | 5. Consumo | ⏭️ | FastAPI + dashboard; LLM com text-to-SQL sobre camada `analytics` |
 
